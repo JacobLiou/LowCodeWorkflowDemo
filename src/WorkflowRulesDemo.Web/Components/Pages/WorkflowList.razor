@@ -1,0 +1,80 @@
+@page "/workflows"
+@inject WorkflowService WorkflowSvc
+@inject NavigationManager Nav
+
+<PageTitle>流程列表</PageTitle>
+
+<Card HeaderText="流程列表">
+    <BodyTemplate>
+        <p class="text-muted">已保存的流程定义，可新建、进入设计器编辑，或删除。</p>
+        <Button Text="+ 新建流程" Color="Color.Primary" OnClick="CreateAsync" />
+
+        <table class="table table-striped align-middle mt-3">
+            <thead>
+                <tr>
+                    <th>名称</th>
+                    <th>版本</th>
+                    <th>描述</th>
+                    <th>节点数</th>
+                    <th>连线数</th>
+                    <th style="width:220px;">操作</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var wf in _workflows)
+                {
+                    <tr>
+                        <td>@wf.Name</td>
+                        <td>@wf.Version</td>
+                        <td>@wf.Description</td>
+                        <td>@wf.Nodes.Count</td>
+                        <td>@wf.Edges.Count</td>
+                        <td>
+                            <Button Text="设计" Size="Size.ExtraSmall" Color="Color.Secondary" OnClick="() => Nav.NavigateTo(GetDesignUrl(wf.Id))" />
+                            <Button Text="运行" Size="Size.ExtraSmall" Color="Color.Success" OnClick="() => Nav.NavigateTo(GetRunUrl(wf.Id))" />
+                            <Button Text="删除" Size="Size.ExtraSmall" Color="Color.Danger" OnClick="() => DeleteAsync(wf.Id)" />
+                        </td>
+                    </tr>
+                }
+                @if (_workflows.Count == 0)
+                {
+                    <tr><td colspan="6" class="text-center text-muted">暂无流程，点击上方按钮新建。</td></tr>
+                }
+            </tbody>
+        </table>
+    </BodyTemplate>
+</Card>
+
+@code {
+    private List<WorkflowDefinition> _workflows = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        _workflows = await WorkflowSvc.GetAllAsync();
+    }
+
+    private async Task CreateAsync()
+    {
+        var wf = new WorkflowDefinition
+        {
+            Name = "新流程",
+            Nodes = new List<WorkflowNode>
+            {
+                new() { Type = NodeType.Start, Name = "开始" },
+                new() { Type = NodeType.End, Name = "结束" }
+            }
+        };
+        await WorkflowSvc.SaveAsync(wf);
+        Nav.NavigateTo($"/workflows/{wf.Id}/design");
+    }
+
+    private async Task DeleteAsync(string id)
+    {
+        await WorkflowSvc.DeleteAsync(id);
+        _workflows = await WorkflowSvc.GetAllAsync();
+    }
+
+    private static string GetDesignUrl(string id) => "/workflows/" + id + "/design";
+
+    private static string GetRunUrl(string id) => "/run?workflowId=" + id;
+}

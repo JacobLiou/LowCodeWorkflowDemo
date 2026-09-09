@@ -1,0 +1,44 @@
+﻿@page "/"
+
+<PageTitle>Workflow + Rules 低代码平台</PageTitle>
+
+<h1>Workflow + Rules 融合低代码工作流平台 Demo</h1>
+
+<p class="text-muted">
+    核心设计：流程设计器画节点 → RuleActivity 节点绑定规则 → 引擎执行到该节点时调用 RuleEngine.Execute(context)
+    → 规则命中结果写回共享 context → 后续 Gateway 节点根据 context 做路由分支。
+</p>
+
+<div class="row g-3">
+    <div class="col-md-4">
+        <div class="card h-100">
+            <div class="card-body">
+                <h5 class="card-title">流程列表</h5>
+                <p class="card-text">管理流程定义，新建/编辑/删除，进入流程设计器。</p>
+                <a class="btn btn-primary" href="/workflows">前往</a>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="card h-100">
+            <div class="card-body">
+                <h5 class="card-title">规则库</h5>
+                <p class="card-text">独立管理规则定义（条件组 AND/OR 嵌套 + 命中动作），可复用于多个流程节点。</p>
+                <a class="btn btn-primary" href="/rules">前往</a>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="card h-100">
+            <div class="card-body">
+                <h5 class="card-title">流程运行</h5>
+                <p class="card-text">选择流程、输入初始 Context，运行并查看逐步执行日志（含规则命中与路由决策）。</p>
+                <a class="btn btn-primary" href="/run">前往</a>
+            </div>
+        </div>
+    </div>
+</div>
+
+<hr />
+
+<p>内置示例：<strong>请假审批流程</strong>（Start → RuleActivity 判断天数 → Gateway 路由 → 总监/经理审批 Task → End）。</p>

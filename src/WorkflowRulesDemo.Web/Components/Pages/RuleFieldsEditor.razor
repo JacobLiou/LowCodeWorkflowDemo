@@ -1,0 +1,33 @@
+@* 规则字段编辑器：名称/描述/条件组/命中动作，供不同弹窗复用（规则库、流程设计器节点配置）。*@
+<div class="mb-2">
+    <label class="form-label">名称</label>
+    <input class="form-control" @bind="Rule.Name" />
+</div>
+<div class="mb-2">
+    <label class="form-label">描述</label>
+    <input class="form-control" @bind="Rule.Description" />
+</div>
+
+<label class="form-label">条件组（命中即视为规则匹配）</label>
+<ConditionGroupEditor Group="Rule.ConditionGroup" />
+
+<label class="form-label mt-2">命中后写回 context 的动作</label>
+@foreach (var action in Rule.Actions.ToList())
+{
+    <div class="row g-2 align-items-center mb-1">
+        <div class="col-5">
+            <input class="form-control form-control-sm" placeholder="字段名，如 approver" @bind="action.Field" />
+        </div>
+        <div class="col-5">
+            <input class="form-control form-control-sm" placeholder="值，如 director" @bind="action.Value" />
+        </div>
+        <div class="col-2">
+            <button type="button" class="btn btn-sm btn-outline-danger" @onclick="() => Rule.Actions.Remove(action)">移除</button>
+        </div>
+    </div>
+}
+<button type="button" class="btn btn-sm btn-outline-primary" @onclick="() => Rule.Actions.Add(new Models.RuleAction())">+ 动作</button>
+
+@code {
+    [Parameter, EditorRequired] public Models.RuleDefinition Rule { get; set; } = new();
+}

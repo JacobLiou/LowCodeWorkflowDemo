@@ -1,0 +1,341 @@
+@page "/workflows/{Id}/design"
+@inject WorkflowService WorkflowSvc
+@inject RuleService RuleSvc
+@inject NavigationManager Nav
+
+<PageTitle>流程设计器</PageTitle>
+
+@if (_workflow is null)
+{
+    <p class="text-muted">加载中...</p>
+}
+else
+{
+    <Card HeaderText="@($"流程设计器 - {_workflow.Name}")">
+        <BodyTemplate>
+            <div class="row g-2 mb-3">
+                <div class="col-md-4">
+                    <label class="form-label">流程名称</label>
+                    <input class="form-control" @bind="_workflow.Name" @bind:after="SaveWorkflowAsync" />
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label">版本</label>
+                    <input class="form-control" @bind="_workflow.Version" @bind:after="SaveWorkflowAsync" />
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label">描述</label>
+                    <input class="form-control" @bind="_workflow.Description" @bind:after="SaveWorkflowAsync" />
+                </div>
+            </div>
+
+            <h5>节点 (Nodes)</h5>
+            <p class="text-muted small">
+                核心设计：当节点类型选择「RuleActivity（规则决策）」时，可绑定/新建规则；引擎执行到该节点会调用 RuleEngine.Execute(context)，
+                命中的 Actions 写回共享 context，供后续 Gateway 节点路由使用。
+            </p>
+            <table class="table table-sm table-striped align-middle">
+                <thead>
+                    <tr>
+                        <th>Id</th>
+                        <th>类型</th>
+                        <th>名称</th>
+                        <th>配置</th>
+                        <th style="width:160px;">操作</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var node in _workflow.Nodes)
+                    {
+                        <tr>
+                            <td><code>@ShortId(node.Id)</code></td>
+                            <td><span class="badge @BadgeClass(node.Type)">@node.Type</span></td>
+                            <td>@node.Name</td>
+                            <td>@DescribeNodeConfig(node)</td>
+                            <td>
+                                <Button Text="编辑" Size="Size.ExtraSmall" Color="Color.Secondary" OnClick="() => OpenNodeModal(node)" />
+                                <Button Text="删除" Size="Size.ExtraSmall" Color="Color.Danger" OnClick="() => DeleteNodeAsync(node)" />
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+            <Button Text="+ 添加节点" Color="Color.Primary" OnClick="() => OpenNodeModal(null)" />
+
+            <hr />
+
+            <h5>连线 (Edges)</h5>
+            <p class="text-muted small">
+                从 Gateway 节点出发的边可以填写 Condition 路由表达式（如 <code>context.approver == 'director'</code>）；
+                留空表示默认/兜底分支。其他节点的出边通常无需条件。
+            </p>
+            <table class="table table-sm table-striped align-middle">
+                <thead>
+                    <tr>
+                        <th>From</th>
+                        <th>To</th>
+                        <th>Condition</th>
+                        <th>Label</th>
+                        <th style="width:100px;">操作</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var edge in _workflow.Edges)
+                    {
+                        <tr>
+                            <td>@NodeName(edge.FromNodeId)</td>
+                            <td>@NodeName(edge.ToNodeId)</td>
+                            <td><code>@edge.Condition</code></td>
+                            <td>@edge.Label</td>
+                            <td>
+                                <Button Text="删除" Size="Size.ExtraSmall" Color="Color.Danger" OnClick="() => DeleteEdgeAsync(edge)" />
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+
+            <div class="row g-2 align-items-end">
+                <div class="col-md-3">
+                    <label class="form-label">From 节点</label>
+                    <select class="form-select" @bind="_newEdgeFrom">
+                        <option value="">-- 选择 --</option>
+                        @foreach (var n in _workflow.Nodes)
+                        {
+                            <option value="@n.Id">@n.Name (@n.Type)</option>
+                        }
+                    </select>
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label">To 节点</label>
+                    <select class="form-select" @bind="_newEdgeTo">
+                        <option value="">-- 选择 --</option>
+                        @foreach (var n in _workflow.Nodes)
+                        {
+                            <option value="@n.Id">@n.Name (@n.Type)</option>
+                        }
+                    </select>
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label">Condition（Gateway 分支用，可留空）</label>
+                    <input class="form-control" placeholder="context.field == 'x'" @bind="_newEdgeCondition" />
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label">Label</label>
+                    <input class="form-control" @bind="_newEdgeLabel" />
+                </div>
+                <div class="col-md-1">
+                    <Button Text="添加" Color="Color.Primary" OnClick="AddEdgeAsync" />
+                </div>
+            </div>
+
+            <hr />
+            <a class="btn btn-outline-secondary" href="/workflows">&laquo; 返回流程列表</a>
+            <a class="btn btn-success" href="/run?workflowId=@_workflow.Id">前往运行 &raquo;</a>
+        </BodyTemplate>
+    </Card>
+}
+
+@if (_editingNode is not null)
+{
+    <div class="modal d-block" tabindex="-1" style="background:rgba(0,0,0,.5);">
+        <div class="modal-dialog modal-lg modal-dialog-scrollable">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">@(_isNewNode ? "添加节点" : "编辑节点")</h5>
+                    <button type="button" class="btn-close" @onclick="CloseNodeModal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-2">
+                        <label class="form-label">节点类型</label>
+                        <select class="form-select" @bind="_editingNode.Type">
+                            <option value="@NodeType.Start">Start（开始）</option>
+                            <option value="@NodeType.Task">Task（任务）</option>
+                            <option value="@NodeType.RuleActivity">RuleActivity（规则决策）</option>
+                            <option value="@NodeType.Gateway">Gateway（网关/分支）</option>
+                            <option value="@NodeType.End">End（结束）</option>
+                        </select>
+                    </div>
+                    <div class="mb-2">
+                        <label class="form-label">节点名称</label>
+                        <input class="form-control" @bind="_editingNode.Name" />
+                    </div>
+
+                    @if (_editingNode.Type == NodeType.RuleActivity)
+                    {
+                        <hr />
+                        <h6>规则配置（RuleActivity）</h6>
+                        <div class="mb-2">
+                            <label class="form-label">绑定规则</label>
+                            <select class="form-select" @bind="_nodeRuleId">
+                                <option value="">-- 未绑定 --</option>
+                                @foreach (var r in _rules)
+                                {
+                                    <option value="@r.Id">@r.Name</option>
+                                }
+                            </select>
+                        </div>
+                        <div class="d-flex gap-2 mb-2">
+                            <button type="button" class="btn btn-sm btn-outline-primary" @onclick="StartCreateRule">+ 新建规则并绑定</button>
+                            <button type="button" class="btn btn-sm btn-outline-secondary" @onclick="StartEditSelectedRule" disabled="@string.IsNullOrEmpty(_nodeRuleId)">编辑所选规则</button>
+                        </div>
+
+                        @if (_ruleBeingEdited is not null)
+                        {
+                            <div class="border rounded p-2" style="background:#fff8e1;">
+                                <RuleFieldsEditor Rule="_ruleBeingEdited" />
+                                <button type="button" class="btn btn-sm btn-success" @onclick="SaveRuleBeingEditedAsync">保存规则</button>
+                                <button type="button" class="btn btn-sm btn-secondary" @onclick="() => _ruleBeingEdited = null">取消</button>
+                            </div>
+                        }
+                    }
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" @onclick="CloseNodeModal">取消</button>
+                    <button type="button" class="btn btn-primary" @onclick="SaveNodeAsync">保存节点</button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter] public string Id { get; set; } = string.Empty;
+
+    private WorkflowDefinition? _workflow;
+    private List<RuleDefinition> _rules = new();
+
+    private WorkflowNode? _editingNode;
+    private bool _isNewNode;
+    private string _nodeRuleId = string.Empty;
+    private RuleDefinition? _ruleBeingEdited;
+
+    private string _newEdgeFrom = string.Empty;
+    private string _newEdgeTo = string.Empty;
+    private string? _newEdgeCondition;
+    private string? _newEdgeLabel;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _workflow = await WorkflowSvc.GetAsync(Id);
+        _rules = await RuleSvc.GetAllAsync();
+        if (_workflow is null)
+        {
+            Nav.NavigateTo("/workflows");
+        }
+    }
+
+    private async Task SaveWorkflowAsync()
+    {
+        if (_workflow is null) return;
+        await WorkflowSvc.SaveAsync(_workflow);
+    }
+
+    private string NodeName(string nodeId) => _workflow?.Nodes.FirstOrDefault(n => n.Id == nodeId)?.Name ?? nodeId;
+
+    private static string ShortId(string id) => id.Length > 8 ? id[..8] : id;
+
+    private static string BadgeClass(NodeType type) => type switch
+    {
+        NodeType.Start => "bg-success",
+        NodeType.End => "bg-secondary",
+        NodeType.RuleActivity => "bg-warning text-dark",
+        NodeType.Gateway => "bg-info text-dark",
+        _ => "bg-primary"
+    };
+
+    private string DescribeNodeConfig(WorkflowNode node)
+    {
+        if (node.Type != NodeType.RuleActivity) return string.Empty;
+        var config = node.GetRuleActivityConfig();
+        var rule = _rules.FirstOrDefault(r => r.Id == config.RuleId);
+        return rule is null ? "(未绑定规则)" : $"RuleId={rule.Name}";
+    }
+
+    private void OpenNodeModal(WorkflowNode? node)
+    {
+        _isNewNode = node is null;
+        _editingNode = node ?? new WorkflowNode { Type = NodeType.Task, Name = "新节点" };
+        _nodeRuleId = _editingNode.Type == NodeType.RuleActivity ? _editingNode.GetRuleActivityConfig().RuleId ?? string.Empty : string.Empty;
+        _ruleBeingEdited = null;
+    }
+
+    private void CloseNodeModal()
+    {
+        _editingNode = null;
+        _ruleBeingEdited = null;
+    }
+
+    private void StartCreateRule()
+    {
+        _ruleBeingEdited = new RuleDefinition { Name = "新规则" };
+    }
+
+    private void StartEditSelectedRule()
+    {
+        var existing = _rules.FirstOrDefault(r => r.Id == _nodeRuleId);
+        if (existing is null) return;
+        var json = System.Text.Json.JsonSerializer.Serialize(existing);
+        _ruleBeingEdited = System.Text.Json.JsonSerializer.Deserialize<RuleDefinition>(json);
+    }
+
+    private async Task SaveRuleBeingEditedAsync()
+    {
+        if (_ruleBeingEdited is null) return;
+        await RuleSvc.SaveAsync(_ruleBeingEdited);
+        _rules = await RuleSvc.GetAllAsync();
+        _nodeRuleId = _ruleBeingEdited.Id;
+        _ruleBeingEdited = null;
+    }
+
+    private async Task SaveNodeAsync()
+    {
+        if (_workflow is null || _editingNode is null) return;
+
+        if (_editingNode.Type == NodeType.RuleActivity)
+        {
+            _editingNode.SetRuleActivityConfig(new RuleActivityConfig { RuleId = string.IsNullOrEmpty(_nodeRuleId) ? null : _nodeRuleId });
+        }
+
+        if (_isNewNode)
+        {
+            _workflow.Nodes.Add(_editingNode);
+        }
+
+        await WorkflowSvc.SaveAsync(_workflow);
+        CloseNodeModal();
+    }
+
+    private async Task DeleteNodeAsync(WorkflowNode node)
+    {
+        if (_workflow is null) return;
+        _workflow.Nodes.Remove(node);
+        _workflow.Edges.RemoveAll(e => e.FromNodeId == node.Id || e.ToNodeId == node.Id);
+        await WorkflowSvc.SaveAsync(_workflow);
+    }
+
+    private async Task AddEdgeAsync()
+    {
+        if (_workflow is null || string.IsNullOrEmpty(_newEdgeFrom) || string.IsNullOrEmpty(_newEdgeTo)) return;
+
+        _workflow.Edges.Add(new WorkflowEdge
+        {
+            FromNodeId = _newEdgeFrom,
+            ToNodeId = _newEdgeTo,
+            Condition = string.IsNullOrWhiteSpace(_newEdgeCondition) ? null : _newEdgeCondition,
+            Label = _newEdgeLabel
+        });
+
+        await WorkflowSvc.SaveAsync(_workflow);
+        _newEdgeFrom = string.Empty;
+        _newEdgeTo = string.Empty;
+        _newEdgeCondition = null;
+        _newEdgeLabel = null;
+    }
+
+    private async Task DeleteEdgeAsync(WorkflowEdge edge)
+    {
+        if (_workflow is null) return;
+        _workflow.Edges.Remove(edge);
+        await WorkflowSvc.SaveAsync(_workflow);
+    }
+}

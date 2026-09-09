@@ -1,0 +1,183 @@
+@page "/run"
+@inject WorkflowService WorkflowSvc
+@inject RuleService RuleSvc
+@inject WorkflowRulesDemo.Web.Engine.WorkflowEngine Engine
+@using System.Text.Json
+
+<PageTitle>流程运行</PageTitle>
+
+<Card HeaderText="流程运行">
+    <BodyTemplate>
+        <p class="text-muted">
+            选择一个流程定义，输入初始 Context（JSON），点击运行。引擎会从 Start 出发逐节点执行：
+            RuleActivity 节点调用 RuleEngine 把命中结果写回 context，Gateway 节点按 context 字段路由分支。
+        </p>
+
+        <div class="row g-2">
+            <div class="col-md-4">
+                <label class="form-label">选择流程</label>
+                <select class="form-select" @bind="_selectedWorkflowId" @bind:after="OnWorkflowChangedAsync">
+                    <option value="">-- 请选择 --</option>
+                    @foreach (var wf in _workflows)
+                    {
+                        <option value="@wf.Id">@wf.Name (v@wf.Version)</option>
+                    }
+                </select>
+            </div>
+            <div class="col-md-8">
+                <label class="form-label">初始 Context（JSON）</label>
+                <textarea class="form-control" rows="4" @bind="_contextJson"></textarea>
+            </div>
+        </div>
+
+        <Button Text="▶ 运行" Color="Color.Primary" OnClick="RunAsync" IsDisabled="string.IsNullOrEmpty(_selectedWorkflowId)" />
+
+        @if (_error is not null)
+        {
+            <div class="alert alert-danger mt-3">@_error</div>
+        }
+
+        @if (_result is not null)
+        {
+            <hr />
+            <h5>执行结果：@(_result.Success ? "成功完成" : "执行中止")</h5>
+            @if (!_result.Success)
+            {
+                <div class="alert alert-warning">@_result.Error</div>
+            }
+
+            <h6>最终 Context</h6>
+            <pre class="bg-light p-2 border rounded">@JsonSerializer.Serialize(_result.FinalContext, new JsonSerializerOptions { WriteIndented = true })</pre>
+
+            <h6>执行日志（时间线）</h6>
+            <ul class="list-group">
+                @foreach (var log in _result.Logs)
+                {
+                    <li class="list-group-item">
+                        <div class="d-flex justify-content-between">
+                            <strong>#@log.Step [@log.NodeType] @log.NodeName</strong>
+                        </div>
+                        <div>@log.Message</div>
+
+                        @if (log.RuleDetails is { Count: > 0 })
+                        {
+                            <div class="mt-1">
+                                <span class="text-muted small">规则条件明细：</span>
+                                <ul class="mb-1 small">
+                                    @foreach (var d in log.RuleDetails)
+                                    {
+                                        <li>@d</li>
+                                    }
+                                </ul>
+                            </div>
+                        }
+
+                        @if (!string.IsNullOrEmpty(log.RouteDecision))
+                        {
+                            <div class="small text-primary">路由决策：@log.RouteDecision</div>
+                        }
+
+                        <details class="small mt-1">
+                            <summary class="text-muted">context 变化（点击展开）</summary>
+                            <div class="row">
+                                <div class="col-6"><em>Before:</em> <code>@log.ContextBeforeJson</code></div>
+                                <div class="col-6"><em>After:</em> <code>@log.ContextAfterJson</code></div>
+                            </div>
+                        </details>
+                    </li>
+                }
+            </ul>
+        }
+    </BodyTemplate>
+</Card>
+
+@code {
+    [SupplyParameterFromQuery(Name = "workflowId")]
+    public string? WorkflowIdQuery { get; set; }
+
+    private List<WorkflowDefinition> _workflows = new();
+    private string _selectedWorkflowId = string.Empty;
+    private string _contextJson = "{}";
+    private string? _error;
+    private WorkflowRulesDemo.Web.Engine.WorkflowExecutionResult? _result;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _workflows = await WorkflowSvc.GetAllAsync();
+        if (!string.IsNullOrEmpty(WorkflowIdQuery) && _workflows.Any(w => w.Id == WorkflowIdQuery))
+        {
+            _selectedWorkflowId = WorkflowIdQuery;
+            _contextJson = _selectedWorkflowId == SeedDataService.SampleWorkflowId
+                ? SeedDataService.SampleInitialContextJson
+                : "{}";
+        }
+    }
+
+    private Task OnWorkflowChangedAsync()
+    {
+        _contextJson = _selectedWorkflowId == SeedDataService.SampleWorkflowId
+            ? SeedDataService.SampleInitialContextJson
+            : "{}";
+        _result = null;
+        _error = null;
+        return Task.CompletedTask;
+    }
+
+    private async Task RunAsync()
+    {
+        _error = null;
+        _result = null;
+
+        var workflow = await WorkflowSvc.GetAsync(_selectedWorkflowId);
+        if (workflow is null)
+        {
+            _error = "找不到所选流程。";
+            return;
+        }
+
+        Dictionary<string, object> initialContext;
+        try
+        {
+            initialContext = ParseContext(_contextJson);
+        }
+        catch (Exception ex)
+        {
+            _error = $"初始 Context JSON 解析失败：{ex.Message}";
+            return;
+        }
+
+        var ruleLookup = await RuleSvc.GetLookupAsync();
+        _result = Engine.Execute(workflow, initialContext, ruleLookup);
+    }
+
+    private static Dictionary<string, object> ParseContext(string json)
+    {
+        var result = new Dictionary<string, object>();
+        if (string.IsNullOrWhiteSpace(json))
+        {
+            return result;
+        }
+
+        using var doc = JsonDocument.Parse(json);
+        foreach (var prop in doc.RootElement.EnumerateObject())
+        {
+            var value = ToClrValue(prop.Value);
+            if (value is not null)
+            {
+                result[prop.Name] = value;
+            }
+        }
+
+        return result;
+    }
+
+    private static object? ToClrValue(JsonElement element) => element.ValueKind switch
+    {
+        JsonValueKind.String => element.GetString(),
+        JsonValueKind.Number => element.TryGetInt64(out var l) ? l : element.GetDouble(),
+        JsonValueKind.True => true,
+        JsonValueKind.False => false,
+        JsonValueKind.Null => null,
+        _ => element.GetRawText()
+    };
+}
